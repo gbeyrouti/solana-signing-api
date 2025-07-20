@@ -4,6 +4,9 @@
   "description": "API de signature Solana pour n8n",
   "type": "module",
   "main": "api/sign.js",
+  "dependencies": {
+    "@noble/ed25519": "^2.0.0"
+  },
   "scripts": {
     "dev": "vercel dev",
     "deploy": "vercel"
