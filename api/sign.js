@@ -1,4 +1,6 @@
-// API de signature Solana avec VRAIE Ed25519 - api/sign.js
+// API finale avec @noble/ed25519 - api/sign.js
+import * as ed25519 from '@noble/ed25519';
+
 export default async function handler(req, res) {
   // Configuration CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -23,10 +25,7 @@ export default async function handler(req, res) {
       });
     }
 
-    console.log('🔑 Signature Solana avec Ed25519 RÉEL');
-
-    // Import crypto Node.js (disponible sur Vercel)
-    const crypto = await import('crypto');
+    console.log('🔑 Signature avec @noble/ed25519 - Version FINALE');
 
     // Base58 et utilitaires
     const ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
@@ -120,35 +119,6 @@ export default async function handler(req, res) {
              digits.reverse().map(digit => ALPHABET[digit]).join('');
     }
 
-    // Implémentation Ed25519 simple avec crypto Node.js
-    function ed25519Sign(message, privateKey) {
-      try {
-        // Utiliser crypto.sign avec Ed25519
-        const keyObject = crypto.createPrivateKey({
-          key: privateKey,
-          format: 'der',
-          type: 'pkcs8'
-        });
-        
-        return crypto.sign(null, message, keyObject);
-      } catch (error) {
-        console.log('⚠️ crypto.sign échoué, tentative alternative...');
-        
-        // Alternative : utiliser createHmac comme approximation
-        // ATTENTION: Ceci n'est PAS Ed25519 réel, juste pour test
-        const hmac = crypto.createHmac('sha256', privateKey.slice(0, 32));
-        hmac.update(message);
-        const hash = hmac.digest();
-        
-        // Créer une signature de 64 bytes (format Ed25519)
-        const signature = new Uint8Array(64);
-        signature.set(hash, 0);
-        signature.set(privateKey.slice(0, 32), 32);
-        
-        return signature;
-      }
-    }
-
     // Traitement de la clé privée
     let privateKeyBytes;
     if (typeof privateKey === 'string') {
@@ -167,104 +137,68 @@ export default async function handler(req, res) {
                       privateKeyBytes.slice(0, 32) : 
                       privateKeyBytes;
 
-    console.log('🔓 Clé privée traitée, longueur:', secretKey.length);
+    console.log('🔓 Clé secrète préparée, longueur:', secretKey.length);
 
     // Décoder transaction Jupiter
     const transactionBytes = base64ToBytes(transaction);
     console.log('📦 Transaction reçue, longueur:', transactionBytes.length);
 
-    // Analyser structure
+    // Analyser structure Solana
     const numSignatures = transactionBytes[0];
-    console.log('🔢 Signatures requises:', numSignatures);
-
-    // Extraire le message à signer
     const messageStart = 1 + (numSignatures * 64);
     const messageBytes = transactionBytes.slice(messageStart);
-    console.log('📄 Message à signer, longueur:', messageBytes.length);
+    
+    console.log('📄 Message à signer:');
+    console.log('  Signatures requises:', numSignatures);
+    console.log('  Offset message:', messageStart);
+    console.log('  Longueur message:', messageBytes.length);
 
-    // SIGNATURE RÉELLE Ed25519
-    let signature;
-    try {
-      // Méthode 1: Essayer avec WebCrypto moderne
-      const { webcrypto } = crypto;
-      
-      const cryptoKey = await webcrypto.subtle.importKey(
-        'raw',
-        secretKey,
-        { name: 'Ed25519' },
-        false,
-        ['sign']
-      );
-
-      const signatureArrayBuffer = await webcrypto.subtle.sign(
-        'Ed25519',
-        cryptoKey,
-        messageBytes
-      );
-      
-      signature = new Uint8Array(signatureArrayBuffer);
-      console.log('✅ Signature WebCrypto Ed25519 réussie !');
-      
-    } catch (webCryptoError) {
-      console.log('⚠️ WebCrypto échoué:', webCryptoError.message);
-      
-      // Méthode 2: Fallback avec crypto Node.js
-      try {
-        signature = ed25519Sign(messageBytes, secretKey);
-        console.log('✅ Signature crypto Node.js réussie !');
-      } catch (nodeError) {
-        console.log('⚠️ Node crypto échoué:', nodeError.message);
-        
-        // Méthode 3: Dernière chance - utiliser l'algorithme manual
-        const hash = crypto.createHash('sha256').update(messageBytes).digest();
-        signature = new Uint8Array(64);
-        
-        // Créer une signature déterministe basée sur le hash + clé
-        const combined = new Uint8Array(hash.length + secretKey.length);
-        combined.set(hash, 0);
-        combined.set(secretKey, hash.length);
-        
-        const finalHash = crypto.createHash('sha256').update(combined).digest();
-        signature.set(finalHash, 0);
-        signature.set(secretKey, 32);
-        
-        console.log('⚠️ Signature manuelle générée (dernière chance)');
-      }
-    }
-
-    console.log('🔏 Signature finale, longueur:', signature.length);
+    // SIGNATURE ED25519 AVEC @NOBLE
+    console.log('🔏 Signature avec @noble/ed25519...');
+    
+    const signature = await ed25519.sign(messageBytes, secretKey);
+    
+    console.log('✅ SIGNATURE RÉUSSIE avec @noble/ed25519 !');
+    console.log('🎯 Signature longueur:', signature.length);
 
     // Construire transaction signée
     const signedTransactionBytes = new Uint8Array(transactionBytes);
     signedTransactionBytes.set(signature, 1);
 
-    // Encoder résultat
+    console.log('🔧 Signature insérée dans la transaction');
+
+    // Encoder résultat final
     const signedTransactionB64 = bytesToBase64(signedTransactionBytes);
     const signatureB58 = base58Encode(signature);
 
-    console.log('🎯 Transaction signée complète');
+    console.log('🎉 TRANSACTION FINALE PRÊTE !');
+    console.log('📏 Longueur finale:', signedTransactionB64.length, 'caractères');
 
     return res.status(200).json({
       success: true,
       signedTransaction: signedTransactionB64,
       signature: signatureB58,
-      method: 'Ed25519-Real-Attempt',
+      method: 'Noble-Ed25519-Professional',
       timestamp: new Date().toISOString(),
       debug: {
+        library: '@noble/ed25519',
         originalLength: transactionBytes.length,
+        messageStart: messageStart,
         messageLength: messageBytes.length,
         signatureLength: signature.length,
-        secretKeyLength: secretKey.length
+        secretKeyLength: secretKey.length,
+        finalLength: signedTransactionB64.length
       }
     });
 
   } catch (error) {
-    console.error('❌ Erreur signature réelle:', error);
+    console.error('❌ Erreur @noble/ed25519:', error);
     
     return res.status(500).json({
       success: false,
       error: error.message,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      library: '@noble/ed25519'
     });
   }
 }
