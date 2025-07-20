@@ -1,9 +1,5 @@
-// API finale avec @noble/ed25519 et SHA-512 configuré - api/sign.js
-import * as ed25519 from '@noble/ed25519';
-import { createHash } from 'crypto';
-
-// Configuration SHA-512 pour @noble/ed25519
-ed25519.utils.sha512Sync = (...m) => createHash('sha512').update(Buffer.concat(m)).digest();
+// API finale avec TweetNaCl (simple et fiable) - api/sign.js
+import nacl from 'tweetnacl';
 
 export default async function handler(req, res) {
   // Configuration CORS
@@ -29,7 +25,7 @@ export default async function handler(req, res) {
       });
     }
 
-    console.log('🔑 Signature avec @noble/ed25519 + SHA-512 configuré');
+    console.log('🔑 Signature avec TweetNaCl (Ed25519 natif)');
 
     // Base58 et utilitaires
     const ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
@@ -136,12 +132,27 @@ export default async function handler(req, res) {
       privateKeyBytes = new Uint8Array(privateKey);
     }
 
-    // Clé secrète Solana (32 bytes)
-    const secretKey = privateKeyBytes.length === 64 ? 
-                      privateKeyBytes.slice(0, 32) : 
-                      privateKeyBytes;
+    console.log('🔓 Clé privée reçue, longueur:', privateKeyBytes.length);
 
-    console.log('🔓 Clé secrète préparée, longueur:', secretKey.length);
+    // Pour TweetNaCl, on a besoin de la clé complète (64 bytes) ou juste secrète (32 bytes)
+    let keyPair;
+    
+    if (privateKeyBytes.length === 64) {
+      // Clé Solana complète (secret + public)
+      const secretKey = privateKeyBytes.slice(0, 32);
+      keyPair = nacl.sign.keyPair.fromSecretKey(privateKeyBytes);
+      console.log('🔑 Keypair créée depuis clé 64 bytes');
+    } else if (privateKeyBytes.length === 32) {
+      // Juste la partie secrète
+      keyPair = nacl.sign.keyPair.fromSeed(privateKeyBytes);
+      console.log('🔑 Keypair créée depuis seed 32 bytes');
+    } else {
+      throw new Error(`Longueur de clé invalide: ${privateKeyBytes.length} (attendu: 32 ou 64)`);
+    }
+
+    console.log('✅ Keypair TweetNaCl créée');
+    console.log('  Clé publique longueur:', keyPair.publicKey.length);
+    console.log('  Clé secrète longueur:', keyPair.secretKey.length);
 
     // Décoder transaction Jupiter
     const transactionBytes = base64ToBytes(transaction);
@@ -156,72 +167,66 @@ export default async function handler(req, res) {
     console.log('  Signatures requises:', numSignatures);
     console.log('  Offset message:', messageStart);
     console.log('  Longueur message:', messageBytes.length);
+    console.log('  Premiers bytes:', Array.from(messageBytes.slice(0, 10)));
 
-    // Test de la configuration SHA-512
-    try {
-      console.log('🧪 Test SHA-512...');
-      const testHash = ed25519.utils.sha512Sync(new Uint8Array([1, 2, 3]));
-      console.log('✅ SHA-512 configuré correctement, longueur:', testHash.length);
-    } catch (hashError) {
-      console.error('❌ Erreur SHA-512:', hashError.message);
-      throw new Error('Configuration SHA-512 échouée: ' + hashError.message);
-    }
-
-    // SIGNATURE ED25519 AVEC @NOBLE + SHA-512
-    console.log('🔏 Signature avec @noble/ed25519 (SHA-512 configuré)...');
+    // SIGNATURE ED25519 AVEC TWEETNACL
+    console.log('🔏 Signature avec TweetNaCl...');
     
-    const signature = await ed25519.sign(messageBytes, secretKey);
+    const signature = nacl.sign.detached(messageBytes, keyPair.secretKey);
     
-    console.log('✅ SIGNATURE RÉUSSIE avec @noble/ed25519 !');
+    console.log('✅ SIGNATURE TWEETNACL RÉUSSIE !');
     console.log('🎯 Signature longueur:', signature.length);
     console.log('🔢 Type signature:', signature.constructor.name);
+    console.log('🔍 Signature bytes:', Array.from(signature.slice(0, 8)), '...');
 
-    // Vérifier que c'est bien un Uint8Array de 64 bytes
-    if (!(signature instanceof Uint8Array) || signature.length !== 64) {
-      throw new Error(`Signature invalide: type=${signature.constructor.name}, longueur=${signature.length}`);
+    // Vérifier la signature (optionnel, pour debug)
+    const isValid = nacl.sign.detached.verify(messageBytes, signature, keyPair.publicKey);
+    console.log('🧪 Vérification signature:', isValid ? '✅ VALIDE' : '❌ INVALIDE');
+
+    if (!isValid) {
+      throw new Error('La signature générée n\'est pas valide lors de la vérification');
     }
 
     // Construire transaction signée
     const signedTransactionBytes = new Uint8Array(transactionBytes);
     signedTransactionBytes.set(signature, 1);
 
-    console.log('🔧 Signature insérée dans la transaction');
+    console.log('🔧 Signature insérée dans la transaction à l\'offset 1');
 
     // Encoder résultat final
     const signedTransactionB64 = bytesToBase64(signedTransactionBytes);
     const signatureB58 = base58Encode(signature);
 
-    console.log('🎉 TRANSACTION FINALE PRÊTE !');
+    console.log('🎉 TRANSACTION FINALE PRÊTE AVEC TWEETNACL !');
     console.log('📏 Longueur finale:', signedTransactionB64.length, 'caractères');
 
     return res.status(200).json({
       success: true,
       signedTransaction: signedTransactionB64,
       signature: signatureB58,
-      method: 'Noble-Ed25519-SHA512-Configured',
+      method: 'TweetNaCl-Ed25519-Native',
       timestamp: new Date().toISOString(),
       debug: {
-        library: '@noble/ed25519',
-        sha512Configured: true,
+        library: 'tweetnacl',
+        verified: isValid,
         originalLength: transactionBytes.length,
         messageStart: messageStart,
         messageLength: messageBytes.length,
         signatureLength: signature.length,
         signatureType: signature.constructor.name,
-        secretKeyLength: secretKey.length,
+        keyPairValid: !!(keyPair.publicKey && keyPair.secretKey),
         finalLength: signedTransactionB64.length
       }
     });
 
   } catch (error) {
-    console.error('❌ Erreur @noble/ed25519 (SHA-512):', error);
+    console.error('❌ Erreur TweetNaCl:', error);
     
     return res.status(500).json({
       success: false,
       error: error.message,
       timestamp: new Date().toISOString(),
-      library: '@noble/ed25519',
-      sha512Issue: error.message.includes('sha512') || error.message.includes('hash')
+      library: 'tweetnacl'
     });
   }
 }
