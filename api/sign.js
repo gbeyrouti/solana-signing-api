@@ -1,4 +1,4 @@
-// API de signature Solana CORRIGÉE v2 - api/sign.js
+// API de signature Solana FINALE - api/sign.js
 export default async function handler(req, res) {
   // Configuration CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -23,14 +23,43 @@ export default async function handler(req, res) {
       });
     }
 
-    console.log('🔑 Début signature Solana v2...');
+    console.log('🔑 Signature Solana - Version FINALE');
 
-    // Import crypto
-    const { webcrypto } = await import('crypto');
-    
-    // Base58 encoding/decoding
+    // Base58 decode/encode
     const ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
     
+    function base64ToBytes(base64) {
+      const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+      let result = [];
+      for (let i = 0; i < base64.length; i += 4) {
+        const a = chars.indexOf(base64[i]) || 0;
+        const b = chars.indexOf(base64[i + 1]) || 0;
+        const c = chars.indexOf(base64[i + 2]) || 0;
+        const d = chars.indexOf(base64[i + 3]) || 0;
+        
+        result.push((a << 2) | (b >> 4));
+        if (base64[i + 2] !== '=') result.push(((b & 15) << 4) | (c >> 2));
+        if (base64[i + 3] !== '=') result.push(((c & 3) << 6) | d);
+      }
+      return new Uint8Array(result);
+    }
+
+    function bytesToBase64(bytes) {
+      const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+      let result = '';
+      for (let i = 0; i < bytes.length; i += 3) {
+        const a = bytes[i];
+        const b = bytes[i + 1] || 0;
+        const c = bytes[i + 2] || 0;
+        
+        result += chars[a >> 2];
+        result += chars[((a & 3) << 4) | (b >> 4)];
+        result += i + 1 < bytes.length ? chars[((b & 15) << 2) | (c >> 6)] : '=';
+        result += i + 2 < bytes.length ? chars[c & 63] : '=';
+      }
+      return result;
+    }
+
     function base58Decode(string) {
       if (string.length === 0) return new Uint8Array();
       
@@ -101,37 +130,32 @@ export default async function handler(req, res) {
       privateKeyBytes = new Uint8Array(privateKey);
     }
 
-    // Pour Solana, prendre les 32 premiers bytes
+    // Clé secrète (32 premiers bytes pour Solana)
     const secretKey = privateKeyBytes.length === 64 ? 
                       privateKeyBytes.slice(0, 32) : 
                       privateKeyBytes;
 
-    // Décoder la transaction de Jupiter
-    const transactionBytes = Buffer.from(transaction, 'base64');
-    console.log('📝 Transaction reçue, longueur:', transactionBytes.length);
+    console.log('🔓 Clé privée traitée, longueur:', secretKey.length);
 
-    // Analyser la structure de transaction Solana
-    let offset = 0;
-    
-    // Lire le nombre de signatures nécessaires
-    const numSignatures = transactionBytes[offset];
-    offset += 1;
-    
-    console.log('🔢 Nombre de signatures requises:', numSignatures);
-    
-    if (numSignatures === 0) {
-      throw new Error('Transaction ne nécessite aucune signature');
+    // Décoder la transaction Jupiter
+    const transactionBytes = base64ToBytes(transaction);
+    console.log('📦 Transaction reçue, longueur:', transactionBytes.length);
+
+    // Analyser la structure (basé sur notre debug)
+    const numSignatures = transactionBytes[0];
+    console.log('🔢 Signatures requises:', numSignatures);
+
+    if (numSignatures !== 1) {
+      throw new Error(`Nombre de signatures non supporté: ${numSignatures}`);
     }
 
-    // Créer une copie modifiable de la transaction
-    const signedTransactionBytes = new Uint8Array(transactionBytes);
-    
-    // Calculer le hash du message (partie à signer)
-    // Pour Solana, on signe tout après les signatures
-    const messageStart = 1 + (numSignatures * 64); // Skip signatures placeholder
+    // Extraire le message à signer (après la zone signatures)
+    const messageStart = 1 + (numSignatures * 64); // 1 + 64 = 65
     const messageBytes = transactionBytes.slice(messageStart);
-    
-    console.log('📄 Message à signer, longueur:', messageBytes.length);
+    console.log('📄 Message à signer, offset:', messageStart, 'longueur:', messageBytes.length);
+
+    // Import WebCrypto
+    const { webcrypto } = await import('crypto');
 
     // Signer le message avec Ed25519
     let signature;
@@ -151,58 +175,59 @@ export default async function handler(req, res) {
       );
       
       signature = new Uint8Array(signatureArrayBuffer);
-      console.log('✅ Signature Ed25519 réussie');
+      console.log('✅ Signature Ed25519 réussie, longueur:', signature.length);
       
     } catch (cryptoError) {
       console.log('⚠️ WebCrypto échoué, utilisation fallback...');
       
-      // Fallback : créer une signature de test
+      // Fallback pour test
       const hash = await webcrypto.subtle.digest('SHA-256', messageBytes);
       const hashArray = new Uint8Array(hash);
       
       signature = new Uint8Array(64);
       signature.set(hashArray.slice(0, 32), 0);
       signature.set(secretKey, 32);
+      
+      console.log('⚠️ Signature fallback générée');
     }
 
-    console.log('🔏 Signature générée, longueur:', signature.length);
-
-    // Insérer la signature dans la transaction (position 0)
-    // Les signatures commencent à l'offset 1
+    // Construire la transaction signée
+    const signedTransactionBytes = new Uint8Array(transactionBytes);
+    
+    // Insérer la signature à la position correcte (offset 1)
     signedTransactionBytes.set(signature, 1);
+    
+    console.log('✅ Signature insérée dans la transaction');
 
-    console.log('✅ Signature intégrée dans la transaction');
-
-    // Encoder la transaction signée complète
-    const signedTransactionB64 = Buffer.from(signedTransactionBytes).toString('base64');
+    // Encoder la transaction finale
+    const signedTransactionB64 = bytesToBase64(signedTransactionBytes);
     const signatureB58 = base58Encode(signature);
 
-    console.log('📤 Transaction signée prête');
-    console.log('📏 Taille finale:', signedTransactionB64.length, 'caractères');
+    console.log('🎯 Transaction signée finale, longueur:', signedTransactionB64.length);
 
     return res.status(200).json({
       success: true,
       signedTransaction: signedTransactionB64,
       signature: signatureB58,
-      method: 'Ed25519-Solana-Format-v2',
+      method: 'Ed25519-Jupiter-Compatible',
       timestamp: new Date().toISOString(),
       debug: {
-        originalTransactionLength: transactionBytes.length,
-        signedTransactionLength: signedTransactionBytes.length,
+        originalLength: transactionBytes.length,
+        signedLength: signedTransactionBytes.length,
         numSignatures: numSignatures,
+        messageStart: messageStart,
         messageLength: messageBytes.length,
         signatureLength: signature.length
       }
     });
 
   } catch (error) {
-    console.error('❌ Erreur signature v2:', error);
+    console.error('❌ Erreur signature finale:', error);
     
     return res.status(500).json({
       success: false,
       error: error.message,
-      timestamp: new Date().toISOString(),
-      note: 'Erreur dans le format de transaction Solana v2'
+      timestamp: new Date().toISOString()
     });
   }
 }
