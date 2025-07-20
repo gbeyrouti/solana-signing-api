@@ -1,0 +1,14 @@
+{
+  "name": "solana-signing-api",
+  "version": "1.0.0",
+  "description": "API de signature Solana pour n8n",
+  "type": "module",
+  "main": "api/sign.js",
+  "scripts": {
+    "dev": "vercel dev",
+    "deploy": "vercel"
+  },
+  "keywords": ["solana", "signature", "api", "n8n"],
+  "author": "Votre nom",
+  "license": "MIT"
+}
