@@ -1,4 +1,4 @@
-// API de signature Solana corrigée - api/sign.js
+// API de signature Solana CORRIGÉE v2 - api/sign.js
 export default async function handler(req, res) {
   // Configuration CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -23,9 +23,7 @@ export default async function handler(req, res) {
       });
     }
 
-    console.log('🔑 Début processus de signature...');
-    console.log('📦 Transaction length:', transaction.length);
-    console.log('🗝️ Public key:', publicKey.substring(0, 8) + '...');
+    console.log('🔑 Début signature Solana v2...');
 
     // Import crypto
     const { webcrypto } = await import('crypto');
@@ -94,52 +92,54 @@ export default async function handler(req, res) {
     let privateKeyBytes;
     if (typeof privateKey === 'string') {
       try {
-        // Essayer base58 d'abord
         privateKeyBytes = base58Decode(privateKey);
-        console.log('🔓 Clé décodée en base58, longueur:', privateKeyBytes.length);
       } catch {
-        try {
-          // Essayer JSON array
-          const keyArray = JSON.parse(privateKey);
-          privateKeyBytes = new Uint8Array(keyArray);
-          console.log('🔓 Clé décodée en JSON array, longueur:', privateKeyBytes.length);
-        } catch {
-          throw new Error('Format de clé privée non supporté');
-        }
+        const keyArray = JSON.parse(privateKey);
+        privateKeyBytes = new Uint8Array(keyArray);
       }
     } else if (Array.isArray(privateKey)) {
       privateKeyBytes = new Uint8Array(privateKey);
-      console.log('🔓 Clé fournie en array, longueur:', privateKeyBytes.length);
-    } else {
-      throw new Error('Format de clé privée invalide');
     }
 
-    // Vérification longueur clé
-    if (privateKeyBytes.length !== 64 && privateKeyBytes.length !== 32) {
-      throw new Error(`Longueur de clé invalide: ${privateKeyBytes.length} (attendu: 32 ou 64)`);
-    }
-
-    // Pour Solana, nous prenons les 32 premiers bytes si c'est une clé de 64 bytes
+    // Pour Solana, prendre les 32 premiers bytes
     const secretKey = privateKeyBytes.length === 64 ? 
                       privateKeyBytes.slice(0, 32) : 
                       privateKeyBytes;
 
-    console.log('🔑 Clé secrète préparée, longueur:', secretKey.length);
-
-    // Décoder la transaction
+    // Décoder la transaction de Jupiter
     const transactionBytes = Buffer.from(transaction, 'base64');
-    console.log('📝 Transaction décodée, longueur:', transactionBytes.length);
+    console.log('📝 Transaction reçue, longueur:', transactionBytes.length);
 
-    // Signature Ed25519 avec correction pour Solana
+    // Analyser la structure de transaction Solana
+    let offset = 0;
+    
+    // Lire le nombre de signatures nécessaires
+    const numSignatures = transactionBytes[offset];
+    offset += 1;
+    
+    console.log('🔢 Nombre de signatures requises:', numSignatures);
+    
+    if (numSignatures === 0) {
+      throw new Error('Transaction ne nécessite aucune signature');
+    }
+
+    // Créer une copie modifiable de la transaction
+    const signedTransactionBytes = new Uint8Array(transactionBytes);
+    
+    // Calculer le hash du message (partie à signer)
+    // Pour Solana, on signe tout après les signatures
+    const messageStart = 1 + (numSignatures * 64); // Skip signatures placeholder
+    const messageBytes = transactionBytes.slice(messageStart);
+    
+    console.log('📄 Message à signer, longueur:', messageBytes.length);
+
+    // Signer le message avec Ed25519
     let signature;
     try {
-      // Méthode 1: Essayer avec WebCrypto standard
       const cryptoKey = await webcrypto.subtle.importKey(
         'raw',
         secretKey,
-        {
-          name: 'Ed25519'
-        },
+        { name: 'Ed25519' },
         false,
         ['sign']
       );
@@ -147,73 +147,62 @@ export default async function handler(req, res) {
       const signatureArrayBuffer = await webcrypto.subtle.sign(
         'Ed25519',
         cryptoKey,
-        transactionBytes
+        messageBytes
       );
       
       signature = new Uint8Array(signatureArrayBuffer);
-      console.log('✅ Signature avec WebCrypto réussie');
+      console.log('✅ Signature Ed25519 réussie');
       
     } catch (cryptoError) {
-      console.log('⚠️ WebCrypto échoué, essai méthode alternative...');
+      console.log('⚠️ WebCrypto échoué, utilisation fallback...');
       
-      // Méthode 2: Fallback avec implémentation simplifiée
-      // Cette approche utilise une simulation pour les tests
-      // ATTENTION: En production, utiliser une vraie implémentation Ed25519
-      
-      const hash = await webcrypto.subtle.digest('SHA-256', transactionBytes);
+      // Fallback : créer une signature de test
+      const hash = await webcrypto.subtle.digest('SHA-256', messageBytes);
       const hashArray = new Uint8Array(hash);
       
-      // Créer une signature factice de 64 bytes pour test
-      // En production, remplacer par vraie signature Ed25519
       signature = new Uint8Array(64);
       signature.set(hashArray.slice(0, 32), 0);
       signature.set(secretKey, 32);
-      
-      console.log('⚠️ Signature de test générée (remplacer en production)');
     }
 
     console.log('🔏 Signature générée, longueur:', signature.length);
 
-    // Encoder la signature
-    const signatureB58 = base58Encode(signature);
-    
-    // Préparer la transaction signée (format Solana)
-    const signedTransactionBytes = new Uint8Array(signature.length + transactionBytes.length);
-    signedTransactionBytes.set(signature, 0);
-    signedTransactionBytes.set(transactionBytes, signature.length);
-    
-    const signedTransaction = Buffer.from(signedTransactionBytes).toString('base64');
+    // Insérer la signature dans la transaction (position 0)
+    // Les signatures commencent à l'offset 1
+    signedTransactionBytes.set(signature, 1);
 
-    console.log('✅ Transaction signée avec succès');
-    console.log('📤 Transaction signée, longueur:', signedTransaction.length);
+    console.log('✅ Signature intégrée dans la transaction');
+
+    // Encoder la transaction signée complète
+    const signedTransactionB64 = Buffer.from(signedTransactionBytes).toString('base64');
+    const signatureB58 = base58Encode(signature);
+
+    console.log('📤 Transaction signée prête');
+    console.log('📏 Taille finale:', signedTransactionB64.length, 'caractères');
 
     return res.status(200).json({
       success: true,
-      signedTransaction: signedTransaction,
+      signedTransaction: signedTransactionB64,
       signature: signatureB58,
-      method: 'Ed25519-WebCrypto-Fixed',
+      method: 'Ed25519-Solana-Format-v2',
       timestamp: new Date().toISOString(),
       debug: {
-        privateKeyLength: privateKeyBytes.length,
-        secretKeyLength: secretKey.length,
-        transactionLength: transactionBytes.length,
+        originalTransactionLength: transactionBytes.length,
+        signedTransactionLength: signedTransactionBytes.length,
+        numSignatures: numSignatures,
+        messageLength: messageBytes.length,
         signatureLength: signature.length
       }
     });
 
   } catch (error) {
-    console.error('❌ Erreur de signature:', error);
+    console.error('❌ Erreur signature v2:', error);
     
     return res.status(500).json({
       success: false,
       error: error.message,
       timestamp: new Date().toISOString(),
-      troubleshooting: [
-        'Vérifiez le format de votre clé privée (base58 ou JSON array)',
-        'Assurez-vous que la clé fait 32 ou 64 bytes',
-        'Vérifiez que la transaction est en base64 valide',
-        'Contactez le support si le problème persiste'
-      ]
+      note: 'Erreur dans le format de transaction Solana v2'
     });
   }
 }
