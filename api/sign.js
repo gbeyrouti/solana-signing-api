@@ -1,5 +1,9 @@
-// API finale avec @noble/ed25519 - api/sign.js
+// API finale avec @noble/ed25519 et SHA-512 configuré - api/sign.js
 import * as ed25519 from '@noble/ed25519';
+import { createHash } from 'crypto';
+
+// Configuration SHA-512 pour @noble/ed25519
+ed25519.utils.sha512Sync = (...m) => createHash('sha512').update(Buffer.concat(m)).digest();
 
 export default async function handler(req, res) {
   // Configuration CORS
@@ -25,7 +29,7 @@ export default async function handler(req, res) {
       });
     }
 
-    console.log('🔑 Signature avec @noble/ed25519 - Version FINALE');
+    console.log('🔑 Signature avec @noble/ed25519 + SHA-512 configuré');
 
     // Base58 et utilitaires
     const ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
@@ -153,13 +157,29 @@ export default async function handler(req, res) {
     console.log('  Offset message:', messageStart);
     console.log('  Longueur message:', messageBytes.length);
 
-    // SIGNATURE ED25519 AVEC @NOBLE
-    console.log('🔏 Signature avec @noble/ed25519...');
+    // Test de la configuration SHA-512
+    try {
+      console.log('🧪 Test SHA-512...');
+      const testHash = ed25519.utils.sha512Sync(new Uint8Array([1, 2, 3]));
+      console.log('✅ SHA-512 configuré correctement, longueur:', testHash.length);
+    } catch (hashError) {
+      console.error('❌ Erreur SHA-512:', hashError.message);
+      throw new Error('Configuration SHA-512 échouée: ' + hashError.message);
+    }
+
+    // SIGNATURE ED25519 AVEC @NOBLE + SHA-512
+    console.log('🔏 Signature avec @noble/ed25519 (SHA-512 configuré)...');
     
     const signature = await ed25519.sign(messageBytes, secretKey);
     
     console.log('✅ SIGNATURE RÉUSSIE avec @noble/ed25519 !');
     console.log('🎯 Signature longueur:', signature.length);
+    console.log('🔢 Type signature:', signature.constructor.name);
+
+    // Vérifier que c'est bien un Uint8Array de 64 bytes
+    if (!(signature instanceof Uint8Array) || signature.length !== 64) {
+      throw new Error(`Signature invalide: type=${signature.constructor.name}, longueur=${signature.length}`);
+    }
 
     // Construire transaction signée
     const signedTransactionBytes = new Uint8Array(transactionBytes);
@@ -178,27 +198,30 @@ export default async function handler(req, res) {
       success: true,
       signedTransaction: signedTransactionB64,
       signature: signatureB58,
-      method: 'Noble-Ed25519-Professional',
+      method: 'Noble-Ed25519-SHA512-Configured',
       timestamp: new Date().toISOString(),
       debug: {
         library: '@noble/ed25519',
+        sha512Configured: true,
         originalLength: transactionBytes.length,
         messageStart: messageStart,
         messageLength: messageBytes.length,
         signatureLength: signature.length,
+        signatureType: signature.constructor.name,
         secretKeyLength: secretKey.length,
         finalLength: signedTransactionB64.length
       }
     });
 
   } catch (error) {
-    console.error('❌ Erreur @noble/ed25519:', error);
+    console.error('❌ Erreur @noble/ed25519 (SHA-512):', error);
     
     return res.status(500).json({
       success: false,
       error: error.message,
       timestamp: new Date().toISOString(),
-      library: '@noble/ed25519'
+      library: '@noble/ed25519',
+      sha512Issue: error.message.includes('sha512') || error.message.includes('hash')
     });
   }
 }
